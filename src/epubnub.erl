@@ -28,7 +28,7 @@
          history/3,
          time/0,
          uuid/0,
-         request/3,
+         request/2,
          uuid/1]).
 
 -define(DEFAULT_ORIGIN, <<"pubsub.pubnub.com">>).
@@ -93,8 +93,8 @@ publish(Channel, Msg) ->
 -spec publish(#epn{}, string(), json_term()) -> json_term().
 publish(EPN, Channel, Msg) ->
     Json = jsx:encode(Msg),
-    request(EPN#epn.client, [EPN#epn.origin, <<"publish">>, EPN#epn.pubkey,
-                             EPN#epn.subkey,  EPN#epn.secretkey, Channel, <<"0">>, Json],
+    request([EPN#epn.origin, <<"publish">>, EPN#epn.pubkey,
+             EPN#epn.subkey,  EPN#epn.secretkey, Channel, <<"0">>, Json],
             EPN#epn.is_ssl).
 
 %%%===================================================================
@@ -135,22 +135,22 @@ subscribe(EPN, Channel, Callback) ->
 -spec subscribe(#epn{}, binary(), fun(), binary()) -> ok.
 subscribe(EPN, Channel, Function, TimeToken) ->
     try
-        {[_, NewTimeToken], Client} = case request(EPN#epn.client, [EPN#epn.origin, <<"subscribe">>,
-                                                                    EPN#epn.subkey, Channel, <<"0">>, TimeToken],
+        [_, NewTimeToken] = case request([EPN#epn.origin, <<"subscribe">>,
+                                          EPN#epn.subkey, Channel, <<"0">>, TimeToken],
                                               EPN#epn.is_ssl) of
-                                          {[[], _], _} = Result ->
+                                [[], _] = Result ->
                                               Result;
-                                          {[Messages, _], _} = Result ->
-                                              lists:foreach(Function, Messages),
-                                              Result
-                                      end,
+                                [Messages, _] = Result ->
+                                    lists:foreach(Function, Messages),
+                                    Result
+                            end,
 
         %% Check if a terminate message has been sent to us, stop and return ok atom if so
         receive
             terminate ->
                 ok
         after 0 ->
-                subscribe(EPN#epn{client=Client}, Channel, Function, NewTimeToken)
+                subscribe(EPN, Channel, Function, NewTimeToken)
         end
     catch
         _:_ ->
@@ -179,8 +179,8 @@ here_now(Channel) ->
 
 -spec here_now(#epn{}, binary()) -> json_term().
 here_now(EPN, Channel) ->
-    request(EPN#epn.client, [EPN#epn.origin, <<"v2">>, <<"presence">>, <<"sub-key">>,
-                             EPN#epn.subkey, <<"channel">>, Channel],
+    request([EPN#epn.origin, <<"v2">>, <<"presence">>, <<"sub-key">>,
+             EPN#epn.subkey, <<"channel">>, Channel],
             EPN#epn.is_ssl).
 
 %%%===================================================================
@@ -195,8 +195,8 @@ history(Channel, Limit) ->
 history(EPN, Channel, Limit) when is_integer(Limit) ->
     history(EPN, Channel, integer_to_list(Limit));
 history(EPN, Channel, Limit) when is_list(Limit) ->
-    request(EPN#epn.client, [EPN#epn.origin, <<"history">>, EPN#epn.subkey,
-                             Channel, <<"0">>, Limit],
+    request([EPN#epn.origin, <<"history">>, EPN#epn.subkey,
+             Channel, <<"0">>, Limit],
             EPN#epn.is_ssl).
 
 %%%===================================================================
@@ -209,7 +209,7 @@ time() ->
 
 -spec time(#epn{}) -> integer().
 time(EPN) ->
-    hd(request(EPN#epn.client, [EPN#epn.origin, <<"time">>, <<"0">>], EPN#epn.is_ssl)).
+    hd(request([EPN#epn.origin, <<"time">>, <<"0">>], EPN#epn.is_ssl)).
 
 
 %%%===================================================================
@@ -222,31 +222,24 @@ uuid() ->
 
 -spec uuid(#epn{}) -> binary().
 uuid(EPN) ->
-    hd(request(EPN#epn.client, [<<"pubnub-prod.appspot.com">>, <<"uuid">>], EPN#epn.is_ssl)).
+    hd(request([<<"pubnub-prod.appspot.com">>, <<"uuid">>], EPN#epn.is_ssl)).
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
 
--spec request(tuple(), list(binary()), boolean()) -> json_term().
-request(Client, URLList, IsSSL) ->
-    case Client of
-        undefined ->
-            Protocol = case IsSSL of
-                           true ->
-                               <<"https:/">>;
-                           false ->
-                               <<"http:/">>
-                       end,
-            URL = bin_join([Protocol | URLList], <<"/">>),
-            {ok, 200, _RespHeaders, Client1} = hackney:request(get, URL, [], <<>>, []);
-        Client ->
-            Path = bin_join([<<"/">> | tl(URLList)], <<"/">>),
-            {ok, 200, _RespHeaders, Client1} = hackney:send_request(Client, {get, Path, [], <<>>})
-    end,
-
-    {ok, Body} = hackney:body(Client1),
-    {jsx:decode(Body), Client1}.
+-spec request(list(binary()), boolean()) -> json_term().
+request(URLList, IsSSL) ->
+    Protocol = case IsSSL of
+                   true ->
+                       <<"https:/">>;
+                   false ->
+                       <<"http:/">>
+               end,
+    URL = bin_join([Protocol | URLList], <<"/">>),
+    {ok, 200, _RespHeaders, Client} = hackney:request(get, URL, [], <<>>, []),
+    {ok, Body} = hackney:body(Client),
+    jsx:decode(Body).
 
 bin_join([H | Rest], BinString) ->
     << H/binary, << <<BinString/binary, B/binary>>  || B <- Rest >>/binary >>.
